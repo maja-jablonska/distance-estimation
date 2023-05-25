@@ -19,4 +19,10 @@ With "Custom", you can use the sliders and respective fields to manually type in
 - 'your_name'.pdf: pdf-file with plot
 If you have everything adjusted, click "start" to get your outputs.
 
-With "Single", you can choose a single source_id in the field "source_id". You can again choose a name for your output. All the other fields are being ignored. The parameters needed are automatically queried from Gaia. The distance inference includes a automatical zeropoint correction of the parallax. On the resulting plot, you can see a second disnace esimate, which is the one from the published distance catalogue.
+With "Single", you can choose a single source_id in the field "source_id". You can again choose a name for your output. All the other fields are being ignored. The parameters needed are automatically queried from Gaia. The distance inference includes a automatical zeropoint correction of the parallax. On the resulting plot, you can see a second distace esimate, which is the one from the published distance catalogue (blue).
+
+With "CSVfile (source_id only)" you can enter a csv-file containing a table with only source_id's and header "source_id". After selecting your name and klicking "start", it produces the same output as with "single", only for all the sources in the file. In addition to that, in saves comparison plots in 'your_name'_comparison-plots.pdf_, in which the inferred distances are compared to the ones from the catalogue. 
+
+With "CSVfile (name, parallax, parallax_error, ra, dec)", you can enter a csv-file containing the columns listed (the name does not automatically have to be the source_id). With this, no data is queried by gaia and no zeropoint correction is being done (you can use your own correction). There is no comparison to the catalogue distances, as the output does not depend on the source_id. This only works for the geometric priors (GGD and EDSD) because for the Photogeometric, you would need more information. 
+
+
