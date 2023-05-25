@@ -25,4 +25,4 @@ With "CSVfile (source_id only)" you can enter a csv-file containing a table with
 
 With "CSVfile (name, parallax, parallax_error, ra, dec)", you can enter a csv-file containing the columns listed (the name does not automatically have to be the source_id). With this, no data is queried by gaia and no zeropoint correction is being done (you can use your own correction). There is no comparison to the catalogue distances, as the output does not depend on the source_id. This only works for the geometric priors (GGD and EDSD) because for the Photogeometric, you would need more information. 
 
-
+In the "results" folder, there is already some data from the test-table for the input "CSVfile (source_id only)" provided in the "data"-folder. You should delete this data before entering your own.
