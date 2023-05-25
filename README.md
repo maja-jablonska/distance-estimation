@@ -28,12 +28,15 @@ With "CSVfile (name, parallax, parallax_error, ra, dec)", you can enter a csv-fi
 In the "results" folder, there is already some data from the test-table for the input "CSVfile (source_id only)" provided in the "data"-folder. You should delete this data before entering your own.
 
 Requirements: 
+
 R version 4.0.4 (2021-02-15)
 Python 3.9.13 (main, Aug 25 2022, 23:26:10)
 Jupyter Notebook or JupyterLab
 
 Python Packages: 
+
 numpy, matplotlib, ipywidgets, IPython, scipy, math, astroquery, astropy, astropy_healpix, zero_point, rpy2
 
 R libraries: 
+
 PolynomF, ...
