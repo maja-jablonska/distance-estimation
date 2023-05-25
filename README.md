@@ -29,9 +29,9 @@ In the "results" folder, there is already some data from the test-table for the 
 
 Requirements: 
 
--R version 4.0.4 (2021-02-15)
--Python 3.9.13 (main, Aug 25 2022, 23:26:10)
--Jupyter Notebook or JupyterLab
+- R version 4.0.4 (2021-02-15)
+- Python 3.9.13 (main, Aug 25 2022, 23:26:10)
+- Jupyter Notebook or JupyterLab
 
 Python Packages: 
 
