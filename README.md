@@ -35,7 +35,7 @@ Requirements:
 
 Python Packages: 
 
-numpy, matplotlib, ipywidgets, IPython, scipy, math, astroquery, astropy, astropy_healpix, zero_point, rpy2
+numpy, matplotlib, ipywidgets, IPython, scipy, math, astroquery, astropy, astropy_healpix, gaiadr3-zeropoint, rpy2
 
 R libraries: 
 
