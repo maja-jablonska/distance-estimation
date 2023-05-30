@@ -39,4 +39,4 @@ numpy, matplotlib, ipywidgets, IPython, scipy, math, astroquery, astropy, astrop
 
 R libraries: 
 
-PolynomF, ...
+data.table, bit64, fields, mvtnorm, PolynomF
