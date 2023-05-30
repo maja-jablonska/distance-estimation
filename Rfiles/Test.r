@@ -24,13 +24,13 @@ if (is.finite(pseudocolour) & is.finite(phot_g_mean_mag) & is.finite(bp_rp)){
     phot_g_mean_mag <- gmag.corrected(phot_g_mean_mag, bp_rp)   
     }
     
-priorfnamestem <- "./Rfiles/Robj/prior_"
+#priorfnamestem <- "./Rfiles/Robj/prior_"
 
-priorfname <- paste(priorfnamestem, p, ".Robj", sep="")
-if(!file.exists(priorfname)) {
-  cat(p, "prior model file", priorfname, "does not exist.\n")
+#priorfname <- paste(priorfnamestem, p, ".Robj", sep="")
+#if(!file.exists(priorfname)) {
+#  cat(p, "prior model file", priorfname, "does not exist.\n")
   #clean.end(writedistfile=FALSE)
-}
+#}
 # priorfname provides
 # - GGDfit, a dataframe of parameters specifying the geometric prior
 # - CQDfit, list of bprpnbins objects (each is of class smooth.spline, 
@@ -38,10 +38,12 @@ if(!file.exists(priorfname)) {
 # - bprpbincent, vector of bprpnbins bp_rp bin centres (for each CQGfit object)
 # - bprpbinwidth, scalar float (common to all CQGfit objects)
 # - bprprange, 2-element vector: range of applicability of CQDfit
-# - priormaglim, scalar float: faintest mag used in fit
-load(priorfname)
+# - priormaglim, scalar float: faintest mag used in fit  
+#load(priorfname)
 
-
+load(url(paste0("https://www.mpia.de/homes/calj/gedr3_distances/prior_fits_final/Robj/prior_",p, ".Robj")))
+  
+    
 flag <- matrix(nrow=1, ncol=4) # 3xinteger, 1xcharacter
 colnames(flag) <- c("gmaglim", "diptest_geo", "diptest_photogeo", "QGmodel")
 # Set Gmaglim flag, and other flags to default values
@@ -141,13 +143,16 @@ photgeo.dist.posterior <- function(r,parallax,parallax_error,p,phot_g_mean_mag,b
     if (is.finite(pseudocolour) & is.finite(phot_g_mean_mag) & is.finite(bp_rp)){
     phot_g_mean_mag <- gmag.corrected(phot_g_mean_mag, bp_rp)   
     }
-    priorfnamestem <- "./Rfiles/Robj/prior_"
-    priorfname <- paste(priorfnamestem, p, ".Robj", sep="")
-    if(!file.exists(priorfname)) {
-      cat(p, "prior model file", priorfname, "does not exist.\n")
-      clean.end(writedistfile=FALSE)
-    }
-    load(priorfname)
+    
+    #priorfnamestem <- "./Rfiles/Robj/prior_"
+    #priorfname <- paste(priorfnamestem, p, ".Robj", sep="")
+    #if(!file.exists(priorfname)) {
+    #  cat(p, "prior model file", priorfname, "does not exist.\n")
+    #  clean.end(writedistfile=FALSE)
+    #}
+    #load(priorfname)
+    load(url(paste0("https://www.mpia.de/homes/calj/gedr3_distances/prior_fits_final/Robj/prior_",p, ".Robj")))
+    
     
     QGmodel1 <- NULL
     QGmodel2 <- NULL
@@ -191,14 +196,18 @@ photgeo.dist.prior <- function(r,rlen,beta,alpha,p,phot_g_mean_mag,bp_rp,pseudoc
     phot_g_mean_mag <- gmag.corrected(phot_g_mean_mag, bp_rp)   
     }
     
-    priorfnamestem <- "./Rfiles/Robj/prior_"
-    priorfname <- paste(priorfnamestem, p, ".Robj", sep="")
-    if(!file.exists(priorfname)) {
-      cat(p, "prior model file", priorfname, "does not exist.\n")
-      clean.end(writedistfile=FALSE)
-    }
+    #priorfnamestem <- "./Rfiles/Robj/prior_"
+    #priorfname <- paste(priorfnamestem, p, ".Robj", sep="")
+    #if(!file.exists(priorfname)) {
+    #  cat(p, "prior model file", priorfname, "does not exist.\n")
+    #  clean.end(writedistfile=FALSE)
+    #}
+    #
+    #load(priorfname)
     
-    load(priorfname)
+    load(url(paste0("https://www.mpia.de/homes/calj/gedr3_distances/prior_fits_final/Robj/prior_",p, ".Robj")))
+   
+    
     QGmodel1 <- NULL
     QGmodel2 <- NULL
     bprpofQGmodels <- NULL
