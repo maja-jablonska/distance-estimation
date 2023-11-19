@@ -10,6 +10,7 @@ from scipy.special import gamma, factorial
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from astroquery.gaia import Gaia
+from astroquery.simbad import Simbad
 import math
 
 # Zeropoint-correction-package
@@ -23,6 +24,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 import astropy.coordinates as coord
 from astropy_healpix import HEALPix
+from astropy.coordinates import Angle
 
 # rpy2 modules: used to convert R to python code
 

@@ -18,8 +18,9 @@ model = widgets.RadioButtons(
 
 source_id = widgets.Text(
     value='28147497671505664',
-    description='source_id',
-    disabled=False
+    description='source_id/name',
+    disabled=False,
+    style = {'description_width': 'initial'}
 )
 
 #field to insert name of file containing source_ids or (name, parallax, parallax_error, ra, dec)

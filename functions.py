@@ -285,3 +285,25 @@ def quantile_distpost5(w,wsd,hp,phot_g_mean_mag,bp_rp,pseudocolour,rInit,Nsamp,N
     flag = samp0[1]
     
     return {'code':1,'val': np.quantile(samp,probs),'message':np.nan,},samp,flag    
+
+# function that resolves a simbad name to a gaia name by first determining the ra and deg in degree using simbad and then searching for the source of respective ra and deg in gaia (take sources in a circle of 0.01 deg closest to center). if the name does not exist or there is no corresponding source_id, an error-string is returned.
+
+def resolve_simbad_to_gaia(simbad_name):
+    result_table = Simbad.query_object(simbad_name)
+    if result_table is not None:
+        ra = Angle(result_table['RA'][0],unit='hour').degree
+        dec = Angle(result_table['DEC'][0], unit='deg').degree 
+        gaia_query = "SELECT source_id FROM gaiadr3.gaia_source WHERE CONTAINS(POINT('ICRS',gaiadr3.gaia_source.ra,gaiadr3.gaia_source.dec),CIRCLE('ICRS',"+str(ra)+","+str(dec)+",0.01))=1;"
+        job = Gaia.launch_job(gaia_query)
+        gaia_table = job.get_results()
+        
+        if len(gaia_table) > 0:
+            
+            return gaia_table['source_id'][0]
+        
+        else:
+            
+            return 'Error: source_id of simbad_name not found!'
+
+    else:
+        return 'Error: simbad_name not found!'
