@@ -311,24 +311,3 @@ def resolve_simbad_to_gaia(simbad_name):
     else:
         return 'Error: entered name not found in Simbad!'
     
-#def resolve_simbad_to_gaia(simbad_name):
-#    custom_simbad = Simbad()
-#    custom_simbad.add_votable_fields('ids')
-#    result_table = custom_simbad.query_object(simbad_name)
-#    
-#    if result_table is not None:
-#        
-#        id_list = result_table['IDS'][0].split('|')
-#        gaia_dr3_source_id = extract_strings_with_word(id_list, 'Gaia DR3')[0]
-#        result = re.findall(r'\d+', gaia_dr3_source_id)
-#        
-#        if len(result) > 0:
-#            
-#            return result[1]
-#        
-#        else:
-#            
-#            return 'Error: source_id of simbad_name not found!'
-#
-#    else:
-#        return 'Error: simbad_name not found!'
