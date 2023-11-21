@@ -12,6 +12,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 from astroquery.gaia import Gaia
 from astroquery.simbad import Simbad
 import math
+import re
 
 # Zeropoint-correction-package
 

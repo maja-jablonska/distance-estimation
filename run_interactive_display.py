@@ -6,6 +6,14 @@ from functions import *
 import interactive_function
 from interactive_function import *
 
+seed = widgets.IntText(
+    value=123,
+    description='seed',
+    disabled=False,
+    style = {'description_width': 'initial'}
+)
+
+
 #button to select the model
 
 model = widgets.RadioButtons(
@@ -22,6 +30,8 @@ source_id = widgets.Text(
     disabled=False,
     style = {'description_width': 'initial'}
 )
+
+description_text = widgets.Label(value='Gaia DR3 source_id (without ‘Gaia DR3’) or name to be resolved at Simbad. Mode "Single" must be selected to use this.')
 
 #field to insert name of file containing source_ids or (name, parallax, parallax_error, ra, dec)
 
@@ -250,10 +260,10 @@ widgets.jslink((metrop_Nburnin0, 'value'), (metrop_Nburnin, 'value'))
 display(model)
 display(custom)
 
-display(source_id)
+display(widgets.HBox([source_id, description_text]))
 display(filename_in)
 display(filename_out)
-
+display(seed)
 
 display(widgets.HBox([w0,w]))
 display(widgets.HBox([wsd0,wsd]))
@@ -280,7 +290,7 @@ display(submit_button)
 def submit(button):
     out.clear_output()
     with out:
-        interactive_function(custom.value,source_id.value,filename_in.value,filename_out.value,model.value,w.value,wsd.value,rlen.value,alpha.value,beta.value,metrop_start.value,metrop_step.value,metrop_Nsamp.value,metrop_Nburnin.value)
+        interactive_function(custom.value,source_id.value,filename_in.value,filename_out.value,model.value,w.value,wsd.value,rlen.value,alpha.value,beta.value,metrop_start.value,metrop_step.value,metrop_Nsamp.value,metrop_Nburnin.value,seed.value)
         
 # tie submit button to a function
 submit_button.on_click(submit)

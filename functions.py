@@ -286,24 +286,49 @@ def quantile_distpost5(w,wsd,hp,phot_g_mean_mag,bp_rp,pseudocolour,rInit,Nsamp,N
     
     return {'code':1,'val': np.quantile(samp,probs),'message':np.nan,},samp,flag    
 
-# function that resolves a simbad name to a gaia name by first determining the ra and deg in degree using simbad and then searching for the source of respective ra and deg in gaia (take sources in a circle of 0.01 deg closest to center). if the name does not exist or there is no corresponding source_id, an error-string is returned.
+# function that resolves a simbad name. If the name does not exist or there is no corresponding source_id, an error-string is returned. Only the source_id returned as string without the 'Gaia DR3' in front of it. The function at the top helps to find the Gaia DR3 name in the list of names from Simbad.
+
+def extract_strings_with_word(string_list, word):
+    result = [s for s in string_list if word in s]
+    return result
 
 def resolve_simbad_to_gaia(simbad_name):
-    result_table = Simbad.query_object(simbad_name)
+    
+    result_table = Simbad.query_objectids(simbad_name)
+    
     if result_table is not None:
-        ra = Angle(result_table['RA'][0],unit='hour').degree
-        dec = Angle(result_table['DEC'][0], unit='deg').degree 
-        gaia_query = "SELECT source_id FROM gaiadr3.gaia_source WHERE CONTAINS(POINT('ICRS',gaiadr3.gaia_source.ra,gaiadr3.gaia_source.dec),CIRCLE('ICRS',"+str(ra)+","+str(dec)+",0.01))=1;"
-        job = Gaia.launch_job(gaia_query)
-        gaia_table = job.get_results()
         
-        if len(gaia_table) > 0:
+        gaia_dr3_source_id = extract_strings_with_word(result_table['ID'], 'Gaia DR3')
+        
+        if len(gaia_dr3_source_id) > 0:
             
-            return gaia_table['source_id'][0]
+            return re.findall(r'\d+',gaia_dr3_source_id[0])[1]
         
         else:
             
-            return 'Error: source_id of simbad_name not found!'
+            return 'Error: Gaia DR3 source_id of entered name not found!'
 
     else:
-        return 'Error: simbad_name not found!'
+        return 'Error: entered name not found in Simbad!'
+    
+#def resolve_simbad_to_gaia(simbad_name):
+#    custom_simbad = Simbad()
+#    custom_simbad.add_votable_fields('ids')
+#    result_table = custom_simbad.query_object(simbad_name)
+#    
+#    if result_table is not None:
+#        
+#        id_list = result_table['IDS'][0].split('|')
+#        gaia_dr3_source_id = extract_strings_with_word(id_list, 'Gaia DR3')[0]
+#        result = re.findall(r'\d+', gaia_dr3_source_id)
+#        
+#        if len(result) > 0:
+#            
+#            return result[1]
+#        
+#        else:
+#            
+#            return 'Error: source_id of simbad_name not found!'
+#
+#    else:
+#        return 'Error: simbad_name not found!'

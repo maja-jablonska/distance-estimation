@@ -533,7 +533,7 @@ def input_csv_sourceid(model,filename_out,filename_in,rows_prior_summary,HDIprob
         else:
             print("\033[1;31m csv-file has to contain only one table with header 'source_id'; either it contains more than one table or header is wrong \033[0m")
     
-    #Comparison plots  
+    #Comparison plots of estimated distances and catalogue distances for entire csv-input  
     
     if rows[0] == ['source_id']:
         
@@ -556,7 +556,7 @@ def input_single(model,source_id,filename_out,rows_prior_summary,HDIprob,rlo,rhi
         
     if not source_id.isdigit(): 
         
-        print("\033[1;31m star does not exist! \033[0m") 
+        print(f"\033[1;31m {source_id} \033[0m") 
     
     else:        
      
@@ -600,7 +600,7 @@ def input_single(model,source_id,filename_out,rows_prior_summary,HDIprob,rlo,rhi
             
             source_id = int(r['source_id'])
             hp = math.floor(source_id / (2**(35)*4**(12-5)) )
-            print('source_id',source_id)
+            print('Gaia DR3 source_id',source_id)
             print('HEALpixel level 5:',hp)
             
             if model == 'EDSD' or model == 'Photogeometric':
@@ -754,6 +754,7 @@ def input_single(model,source_id,filename_out,rows_prior_summary,HDIprob,rlo,rhi
                 s = np.arange(1/(2*Nplot),1/Nplot*(Nplot+1),1/Nplot)
                 rplot = s*(rplothi-rplotlo) + rplotlo
                 
+                #Normalization of the posterior and prior
                 
                 if model == 'EDSD':
                     Z = scipy.integrate.quad(ud_distpost3,rlo,rhi,args=(w,wsd,rlen))[0]
@@ -770,7 +771,8 @@ def input_single(model,source_id,filename_out,rows_prior_summary,HDIprob,rlo,rhi
                         dpost  = ud_distpost4(r=rplot, w=w, wsd=wsd, rlen=rlen,alpha=alpha,beta=beta)/Z
                     dprior = 1/gamma((beta+1)/alpha)*alpha/(rlen**(beta+1))*rplot**beta*np.exp(-(rplot/rlen)**alpha)
                     
-                    
+                # with the photogeometric model, assume that the normalization factor of the posterior 1/Z is approximately 1/max(posterior)
+                
                 if model == 'Photogeometric':
                     dpost = r_ud_distpost5_photogeo(r=rplot,parallax=w,parallax_error=wsd,p=hp,phot_g_mean_mag=phot_g_mean_mag,bp_rp=bp_rp,pseudocolour = pseudocolour)
                     dpost = dpost/max(dpost)
@@ -1037,13 +1039,15 @@ def input_custom(model,filename_out,rows_prior_summary,HDIprob,rlo,rhi,rplotlo,w
         
 # Define the interactive function. This function gets called each time, the start button is pressed. The input variables are connected to the widgets.     
     
-def interactive_function(custom,source_id,filename_in,filename_out,model,w,wsd,rlen,alpha,beta,metrop_start,metrop_step,metrop_Nsamp,metrop_Nburnin):
+def interactive_function(custom,source_id,filename_in,filename_out,model,w,wsd,rlen,alpha,beta,metrop_start,metrop_step,metrop_Nsamp,metrop_Nburnin,seed):
     np.seterr(divide = 'ignore') #ignore divide by 0 errors
     plt.style.use('ggplot')
     
     # general setups:
     
     HDIprob = 0.6827
+    
+    np.random.seed(seed) #set the seed for all np.random functions
     
     #Range for normalizing Posterior
     
