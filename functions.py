@@ -306,8 +306,8 @@ def resolve_simbad_to_gaia(simbad_name):
         
         else:
             
-            return 'Error: Gaia DR3 source_id of entered name not found!'
+            return f'Error: Gaia DR3 source_id of {simbad_name} not found!'
 
     else:
-        return 'Error: entered name not found in Simbad!'
+        return f'Error: {simbad_name} not found in Simbad!'
     
