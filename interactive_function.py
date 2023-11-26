@@ -698,9 +698,9 @@ def input_single(model,source_id,filename_out,rows_prior_summary,HDIprob,rlo,rhi
             print('')
             print('Estimated distances:')
             print('')
-            print('rest [pc] (quantile 0.5):',rRes[0])
-            print('rlo [pc] (quantile 0.159):', rRes[1])
-            print('rhi [pc] (quantile 0.841):', rRes[2])
+            print('r_est [pc] (quantile 0.5):',rRes[0])
+            print('r_lo_est [pc] (quantile 0.159):', rRes[1])
+            print('r_hi_est [pc] (quantile 0.841):', rRes[2])
             print('')
             print('rlen [pc]:', rlen)
             #print('result_flag', rRes[3]) 
@@ -818,20 +818,20 @@ def input_single(model,source_id,filename_out,rows_prior_summary,HDIprob,rlo,rhi
                 if model != 'Photogeometric':
                     print('geometric posterior:')
                     print('')
-                    print('r_med_geo [pc]:',r_med_geo)
-                    print('r_lo_geo [pc]:',r_lo_geo)
-                    print('r_hi_geo [pc]:',r_hi_geo)
+                    print('r_cat[pc] (quantile 0.5):',r_med_geo)
+                    print('r_lo_cat [pc] (quantile 0.159):',r_lo_geo)
+                    print('r_hi_cat [pc] (quantile 0.841):',r_hi_geo)
                     
                     sigma_x = ((rRes[2]-rRes[0]) + (rRes[0]-rRes[1]))/2
                     sigma_y = ((r_hi_geo-r_med_geo) + (r_med_geo-r_lo_geo))/2
                     
-                    comp = abs(r_med_geo-rRes[0])/np.sqrt(sigma_x**2+sigma_y**2)
+                    comp = (rRes[0]-r_med_geo)/np.sqrt((sigma_x+sigma_y)/2) #abs(r_med_geo-rRes[0])/np.sqrt(sigma_x**2+sigma_y**2)
                     
                     print('')
-                    print('Mean error of estimated distance: sigma_est = [(r_hi_est-r_est)+(r_est-r_hi_est)]/2 = ', sigma_x)
-                    print('Mean error of catalogue distance: sigma_cat = [(r_hi_cat-r_cat)+(r_cat-r_hi_cat)]/2 = ', sigma_y)
+                    print('Mean error of estimated distance r_est: sigma_est = [(r_hi_est-r_est)+(r_est-r_lo_est)]/2 = ', sigma_x)
+                    print('Mean error of catalogue distance r_cat: sigma_cat = [(r_hi_cat-r_cat)+(r_cat-r_lo_cat)]/2 = ', sigma_y)
                     print('')
-                    print('|(r_cat-r_est)|/sqrt(sigma_est^2+sigma_cat^2) = ',comp)
+                    print('significance of deviation (estimate - catalogue): (r_est-r_cat)/sqrt((sigma_est+sigma_cat)/2) = = ',comp)
                     
                     ax[2].plot([], [], ' ', label='Distances from catalogue:')
                     ax[2].axvline(1e-3*r_med_geo,label ='$r_{med_{cat}}$ (quantile 0.5)',color='cornflowerblue', alpha=0.7)
@@ -840,20 +840,20 @@ def input_single(model,source_id,filename_out,rows_prior_summary,HDIprob,rlo,rhi
                 else:
                     print('photogeometric posterior:')
                     print('')
-                    print('r_med_photogeo [pc]:',r_med_photogeo)
-                    print('r_lo_photogeo [pc]:',r_lo_photogeo)
-                    print('r_hi_photogeo [pc]:',r_hi_photogeo)
+                    print('r_cat [pc] (quantile 0.5):',r_med_photogeo)
+                    print('r_lo_cat [pc] (quantile 0.159):',r_lo_photogeo)
+                    print('r_hi_cat [pc] (quantile 0.841):',r_hi_photogeo)
                     
                     sigma_x = ((rRes[2]-rRes[0]) + (rRes[0]-rRes[1]))/2
                     sigma_y = ((r_hi_photogeo-r_med_photogeo) + (r_med_photogeo-r_lo_photogeo))/2
                     
-                    comp = abs(r_med_photogeo-rRes[0])/np.sqrt(sigma_x**2+sigma_y**2)
+                    comp = (rRes[0]-r_med_photogeo)/np.sqrt((sigma_x+sigma_y)/2) #abs(r_med_photogeo-rRes[0])/np.sqrt(sigma_x**2+sigma_y**2)
                     
                     print('')
-                    print('Mean error of estimated distance: sigma_est = [(r_hi_est-r_est)+(r_est-r_hi_est)]/2 = ', sigma_x)
-                    print('Mean error of catalogue distance: sigma_cat = [(r_hi_cat-r_cat)+(r_cat-r_hi_cat)]/2 = ', sigma_y)
+                    print('Mean error of estimated distance r_est: sigma_est = [(r_hi_est-r_est)+(r_est-r_lo_est)]/2 = ', sigma_x)
+                    print('Mean error of catalogue distance r_cat: sigma_cat = [(r_hi_cat-r_cat)+(r_cat-r_lo_cat)]/2 = ', sigma_y)
                     print('')
-                    print('|(r_cat-r_est)|/sqrt(sigma_est^2+sigma_cat^2) = ',comp)
+                    print('significance of deviation (estimate - catalogue): (r_est-r_cat)/sqrt((sigma_est+sigma_cat)/2) = ',comp)
                     
                     ax[2].plot([], [],' ' ,label='Distances from catalogue:')
                     ax[2].axvline(1e-3*r_med_photogeo,label ='$r_{med_{cat}}$ (quantile 0.5) ',color='cornflowerblue', alpha=0.7)
@@ -951,9 +951,9 @@ def input_custom(model,filename_out,rows_prior_summary,HDIprob,rlo,rhi,rplotlo,w
     print('')
     print('Estimated distances:')
     print('')
-    print('rest [pc] (quantile 0.5):',rRes[0])
-    print('rlo [pc] (quantile 0.159):', rRes[1])
-    print('rhi [pc] (quantile 0.841):', rRes[2])
+    print('r_est [pc] (quantile 0.5):',rRes[0])
+    print('r_lo_est [pc] (quantile 0.159):', rRes[1])
+    print('r_hi_est [pc] (quantile 0.841):', rRes[2])
     print('')
     print('rlen [pc]:', rlen)
     #print('result_flag', rRes[3]) 
@@ -1062,6 +1062,7 @@ def interactive_function(custom,source_id,filename_in,filename_out,model,w,wsd,r
     HDIprob = 0.6827
     
     np.random.seed(seed) #set the seed for all np.random functions
+    r(f'set.seed({seed})') #set the seed for all r-functions
     
     #Range for normalizing Posterior
     

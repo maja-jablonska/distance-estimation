@@ -33,4 +33,6 @@ import rpy2
 from rpy2.robjects.packages import importr, data
 import rpy2.robjects as robjects
 from rpy2.robjects import numpy2ri
+from rpy2.robjects import r
+
 numpy2ri.activate() #activate conversion from R-code to numpy arrays
