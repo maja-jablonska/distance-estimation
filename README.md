@@ -2,7 +2,7 @@
 
 A command-line tool for estimating stellar distances from parallax measurements using EDSD, GGD, and Photogeometric models via MCMC sampling.
 
-Rewritten [this repository](https://github.com/ElisaHaas25/Interactive-Distance-Estimation) using Claude Opus 4.
+Rewritten [this repository](https://github.com/ElisaHaas25/Interactive-Distance-Estimation) using Claude Opus 4 for my project.
 
 ## Features
 
