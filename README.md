@@ -1,42 +1,200 @@
-# Interactive-Distance-Estimation
-The Jupyter Notebook "Interactive Distance Estimation.ipynb" can be used to plot different prior models as well as their respective posteriors and estimated distances and distance errors. 
+# Distance Estimation CLI Tool
 
-First you choose your model. There currently are three options:
+A command-line tool for estimating stellar distances from parallax measurements using EDSD, GGD, and Photogeometric models via MCMC sampling.
 
-1. GGD: uses generalized gamma distribution as prior
-2. EDSD: uses exponentially decreasing density distribution as prior
-3. Photogeometric: uses combination of GGD prior and information on colour and apparent magnitude 
+Rewritten [this repository](https://github.com/ElisaHaas25/Interactive-Distance-Estimation) using Claude Opus 4.
 
-Next, you coose your type of input.
-1. Custom
-3. Single
-5. CSVfile (source_id only)
-6. CSVfile (name, parallax, parallax_error, ra, dec)
+## Features
 
-With "Custom", you can use the sliders and respective fields to manually type in the inputs for your model.The sliders are limited but the boxes next to them are not, so if you want to exceed the maximum or minimum value of the sliders, type your input in the textfield. The fields "source_id" and "Input .csv-file" are only used for the other input types and are ignored here. The custom input is only available for the  geometric models (GGD and EDSD), not the photogeometric one. The parameters "alpha" and "beta" are only used if you chose the GGD prior, since they are fixed for the EDSD prior. Then you can choose a name for your output files with "Output .pdf/.csv-file". There are three outputs with this type which are being saved in the "results"-folder: 
-- 'your_name'_MCMCsamples.csv_: csv-file with MCMC-samples 
-- 'your_name'_summary.csv_: csv-file with summary statistics
-- 'your_name'.pdf: pdf-file with plot
-If you have everything adjusted, click "start" to get your outputs.
+- **Three distance models**: EDSD, GGD, and Photogeometric
+- **MCMC sampling**: Robust Bayesian distance estimation
+- **Batch processing**: Process multiple sources from CSV files
+- **Consolidated output**: All posterior samples saved to single file
+- **Extensive logging**: Detailed progress tracking and error reporting
+- **No plotting dependencies**: Streamlined for batch processing
 
-With "Single", you can choose a single source_id or the name of the star in the field "source_id/name". You can again choose a name for your output. All the other fields are being ignored. The parameters needed are automatically queried from Gaia. The distance inference includes a automatical zeropoint correction of the parallax. On the resulting plot, you can see a second distace esimate, which is the one from the published distance catalogue (blue).
+## Installation
 
-With "CSVfile (source_id only)" you can enter a csv-file containing a table with only source_id's and header "source_id". After selecting your name and klicking "start", it produces the same output as with "single", only for all the sources in the file. In addition to that, in saves comparison plots in 'your_name'_comparison-plots.pdf_, in which the inferred distances are compared to the ones from the catalogue. 
+1. Install Python dependencies:
 
-With "CSVfile (name, parallax, parallax_error, ra, dec)", you can enter a csv-file containing the columns listed (the name does not automatically have to be the source_id). With this, no data is queried by gaia and no zeropoint correction is being done (you can use your own correction). There is no comparison to the catalogue distances, as the output does not depend on the source_id. This only works for the geometric priors (GGD and EDSD) because for the Photogeometric, you would need more information. 
+```bash
+pip install -r requirements.txt
+```
 
-In the "results" folder, there is already some data from the test-table for the input "CSVfile (source_id only)" provided in the "data"-folder. You should delete this data before entering your own.
+2. Ensure you have the original `packages.py` and `functions.py` files in the same directory.
 
-Requirements: 
+## Usage
 
-- R version 4.0.4 (2021-02-15)
-- Python 3.9.13 (main, Aug 25 2022, 23:26:10)
-- Jupyter Notebook or JupyterLab
+### Basic Usage
 
-Python Packages: 
+```bash
+python distance_estimation_cli.py -i input.csv -o output -m EDSD
+```
 
-numpy, matplotlib, ipywidgets, IPython, scipy, math, astroquery, astropy, astropy_healpix, gaiadr3-zeropoint, rpy2
+### Command Line Options
 
-R libraries: 
+- `--input-file, -i`: Input CSV file with source data (required)
+- `--output-file, -o`: Output file prefix (required)
+- `--model, -m`: Distance model - EDSD, GGD, or Photogeometric (required)
+- `--seed, -s`: Random seed for reproducibility (default: 42)
+- `--nsamp`: Number of MCMC samples (default: 5000)
+- `--nburnin`: Number of MCMC burn-in samples (default: 500)
+- `--log-level`: Logging level - DEBUG, INFO, WARNING, ERROR (default: INFO)
+- `--validate-only`: Only validate input file, don't process
 
-data.table, bit64, fields, mvtnorm, PolynomF
+### Input File Format
+
+#### EDSD Model
+
+Required columns:
+
+- `source_id`: Unique identifier
+- `parallax`: Parallax in milliarcseconds
+- `parallax_error`: Parallax uncertainty in milliarcseconds
+- `rlen`: Length scale parameter in parsecs
+
+Example:
+
+```csv
+source_id,parallax,parallax_error,rlen
+1234567890123456789,5.234,0.123,1250.0
+2345678901234567890,12.456,0.234,1100.0
+```
+
+#### GGD Model
+
+Additional required columns:
+
+- `alpha`: Shape parameter
+- `beta`: Scale parameter
+
+Example:
+
+```csv
+source_id,parallax,parallax_error,rlen,alpha,beta
+1234567890123456789,5.234,0.123,1250.0,1.2,2.8
+2345678901234567890,12.456,0.234,1100.0,1.1,2.9
+```
+
+#### Photogeometric Model
+
+Additional required columns:
+
+- `hp`: HEALPix pixel number
+- `phot_g_mean_mag`: Gaia G magnitude
+- `bp_rp`: Gaia BP-RP color
+- `pseudocolour`: Gaia pseudocolour
+
+### Output Files
+
+Two output files are created:
+
+1. **`{output}_samples.csv`**: All posterior samples from all sources
+
+   - Columns: `source_id`, `sample`
+   - Each row is one posterior sample
+2. **`{output}_summary.csv`**: Summary statistics for each source
+
+   - Columns: `source_id`, `status`, `message`, `r_median`, `r_lo`, `r_hi`, `n_samples`
+   - One row per input source
+
+### Examples
+
+#### Process EDSD model with custom MCMC parameters:
+
+```bash
+python distance_estimation_cli.py \
+    -i data/my_sources.csv \
+    -o results/edsd_results \
+    -m EDSD \
+    --nsamp 10000 \
+    --nburnin 1000 \
+    --seed 123
+```
+
+#### Validate input file only:
+
+```bash
+python distance_estimation_cli.py \
+    -i data/my_sources.csv \
+    -o dummy \
+    -m GGD \
+    --validate-only
+```
+
+#### Enable debug logging:
+
+```bash
+python distance_estimation_cli.py \
+    -i data/my_sources.csv \
+    -o results/debug_run \
+    -m Photogeometric \
+    --log-level DEBUG
+```
+
+## Logging
+
+The tool provides extensive logging:
+
+- **File logging**: All messages saved to `distance_estimation.log`
+- **Console logging**: Progress and important messages displayed
+- **Progress tracking**: Regular updates on processing status
+- **Error handling**: Detailed error messages and stack traces
+
+Log levels:
+
+- `DEBUG`: Detailed per-source processing information
+- `INFO`: Progress updates and summary statistics (default)
+- `WARNING`: Non-fatal issues
+- `ERROR`: Fatal errors and failures
+
+## Performance
+
+- **Processing rate**: Typically 1-10 sources per second depending on model complexity
+- **Memory usage**: Scales linearly with number of sources
+- **Progress tracking**: Regular updates every 100 sources
+
+## Error Handling
+
+The tool handles various error conditions gracefully:
+
+- Invalid parallax values (infinite, negative uncertainties)
+- MCMC convergence failures
+- Missing or malformed input data
+- R interface errors (for Photogeometric model)
+
+Failed sources are logged but processing continues for remaining sources.
+
+## Dependencies
+
+- Python 3.7+
+- NumPy, SciPy, Pandas
+- Astropy, AstroQuery
+- HEALPy
+- Click (command-line interface)
+- rpy2 (for Photogeometric model)
+
+See `requirements.txt` for specific versions.
+
+## Troubleshooting
+
+### Common Issues
+
+1. **R interface errors**: Ensure R and required R packages are installed for Photogeometric model
+2. **Memory issues**: Reduce `--nsamp` for large datasets
+3. **Slow processing**: Check MCMC convergence, reduce sample count if needed
+4. **Input validation failures**: Check column names and data types match requirements
+
+### Getting Help
+
+Use the `--help` flag for quick reference:
+
+```bash
+python distance_estimation_cli.py --help
+```
+
+Enable debug logging to diagnose issues:
+
+```bash
+python distance_estimation_cli.py --log-level DEBUG ...
+```
