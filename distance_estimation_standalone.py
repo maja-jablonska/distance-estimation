@@ -17,6 +17,10 @@ from scipy.stats import norm
 from scipy.special import gamma
 import csv
 import math
+import multiprocessing as mp
+import os
+import json
+from functools import partial
 
 # For HEALPix calculations
 try:
@@ -118,7 +122,7 @@ class PhotogeometricModel:
         if r <= 0 or qgmodel is None:
             return np.nan
             
-        q = gmag - 5 * np.log10(r) + 5
+        q = gmag - 5 * np.log10(r) + 5  # Calculate absolute magnitude
         model_type = qgmodel.get('type', 'null')
         
         if model_type == 'smooth_spline':
@@ -143,7 +147,9 @@ class PhotogeometricModel:
             return max(density, qgmodel.get('mincount', 1e-10))
             
         else:
-            return 1.0  # Default value for null models
+            # For null models, use a simple exponential function of absolute magnitude
+            # This provides a more realistic density than constant 1.0
+            return np.exp(-0.5 * (q - 5.0)**2)  # Peak at M_G = 5.0
     
     def interpolate_qgmodel_density(self, r: float, gmag: float, bp_rp: float,
                                    qgmodel1: Optional[Dict], qgmodel2: Optional[Dict],
@@ -175,7 +181,10 @@ class PhotogeometricModel:
         elif not np.isnan(den2):
             return den2
         else:
-            return 1.0  # Default when both are NaN
+            # If both models are NaN, use a simple exponential function
+            # This provides a more realistic density than constant 1.0
+            q = gmag - 5 * np.log10(r) + 5  # Calculate absolute magnitude
+            return np.exp(-0.5 * (q - 5.0)**2)  # Peak at M_G = 5.0
 
 
 # Essential statistical functions
@@ -536,22 +545,32 @@ def quantile_distpost5(w: float, wsd: float, hp: int, phot_g_mean_mag: float,
 class DistanceEstimator:
     """Main class for distance estimation processing."""
     
-    def __init__(self, model: str, seed: int = 42, prior_file: str = 'prior_summary.csv'):
+    def __init__(self, model: str, seed: int = 42, prior_file: str = 'prior_summary.csv',
+                 n_processes: int = 1, chunk_size: int = 1000, log_level: str = 'INFO'):
         """
         Initialize the distance estimator.
         
         Args:
             model: Model type ('EDSD', 'GGD', or 'Photogeometric')
             seed: Random seed for reproducibility
-            prior_file: Path to prior summary CSV file
+            prior_file: Path to prior summary CSV file (None for worker processes)
+            n_processes: Number of processes for multiprocessing (1 = no multiprocessing)
+            chunk_size: Number of sources to process before saving intermediate results
+            log_level: Logging level string
         """
         self.model = model
         self.seed = seed
         self.prior_file = prior_file
+        self.n_processes = n_processes
+        self.chunk_size = chunk_size
+        self.log_level = log_level
         self.setup_random_seeds()
         
-        # Load prior data
-        self.prior_data = self.load_prior_data()
+        # Load prior data (skip for worker processes)
+        if prior_file is not None:
+            self.prior_data = self.load_prior_data()
+        else:
+            self.prior_data = None  # Will be set by worker process
         
         # MCMC parameters
         self.nsamp = int(5e3)
@@ -563,7 +582,11 @@ class DistanceEstimator:
         self.failed_sources = 0
         self.start_time = None
         
-        logger.info(f"Initialized DistanceEstimator with model: {model}, seed: {seed}")
+        if prior_file is not None:  # Only log for main process
+            logger.info(f"Initialized DistanceEstimator with model: {model}, seed: {seed}")
+            logger.info(f"Multiprocessing: {'Enabled' if n_processes > 1 else 'Disabled'} "
+                       f"({n_processes} processes)")
+            logger.info(f"Chunk size for periodic saving: {chunk_size}")
     
     def setup_random_seeds(self):
         """Set random seeds for reproducibility."""
@@ -860,6 +883,312 @@ class DistanceEstimator:
         self.save_results(samples_by_source, summary_data, output_file)
         self.print_summary()
     
+    def process_dataframe_chunk(self, df: pd.DataFrame, start_idx: int = 0, 
+                               end_idx: Optional[int] = None) -> pd.DataFrame:
+        """
+        Process a chunk of the dataframe.
+        
+        Args:
+            df: Input dataframe with source data
+            start_idx: Starting index (inclusive)
+            end_idx: Ending index (exclusive). If None, process to end of dataframe
+            
+        Returns:
+            DataFrame with chunk subset
+        """
+        if end_idx is None:
+            end_idx = len(df)
+        
+        end_idx = min(end_idx, len(df))
+        
+        if start_idx >= len(df):
+            raise ValueError(f"Start index {start_idx} is beyond dataframe length {len(df)}")
+        
+        logger.info(f"Processing chunk: indices {start_idx} to {end_idx-1} "
+                   f"({end_idx - start_idx} sources)")
+        
+        return df.iloc[start_idx:end_idx].copy()
+    
+    def process_dataframe_parallel(self, df: pd.DataFrame, output_file: str,
+                                  start_idx: int = 0, end_idx: Optional[int] = None) -> None:
+        """
+        Process dataframe with multiprocessing and periodic saving.
+        
+        Args:
+            df: Input dataframe with source data
+            output_file: Path to output file for samples
+            start_idx: Starting index for processing
+            end_idx: Ending index for processing (None = process to end)
+        """
+        # Get the chunk to process
+        if end_idx is not None or start_idx > 0:
+            df_chunk = self.process_dataframe_chunk(df, start_idx, end_idx)
+        else:
+            df_chunk = df
+            
+        self.total_sources = len(df_chunk)
+        self.start_time = time.time()
+        
+        logger.info(f"Starting parallel processing of {self.total_sources} sources")
+        logger.info(f"Model: {self.model}")
+        logger.info(f"MCMC parameters: {self.nsamp} samples, {self.nburnin} burn-in")
+        logger.info(f"Processes: {self.n_processes}")
+        logger.info(f"Chunk size for saving: {self.chunk_size}")
+        
+        # Prepare for parallel processing
+        if self.n_processes > 1:
+            self._process_parallel(df_chunk, output_file)
+        else:
+            self._process_sequential(df_chunk, output_file)
+        
+        self.print_summary()
+    
+    def _process_parallel(self, df: pd.DataFrame, output_file: str) -> None:
+        """Process dataframe using multiprocessing with periodic saving."""
+        # Prepare arguments for worker processes
+        args_list = []
+        for idx, row in df.iterrows():
+            row_data = row.to_dict()
+            args_list.append((row_data, self.model, self.nsamp, self.nburnin, self.prior_data))
+        
+        # Setup output files
+        output_path = Path(output_file)
+        output_dir = output_path.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize storage for results
+        all_samples = {}
+        all_summary = []
+        processed_count = 0
+        
+        # Process in chunks with multiprocessing
+        with mp.Pool(processes=self.n_processes, 
+                     initializer=init_worker, 
+                     initargs=(self.seed, self.log_level)) as pool:
+            
+            # Process chunks of chunk_size
+            for chunk_start in range(0, len(args_list), self.chunk_size):
+                chunk_end = min(chunk_start + self.chunk_size, len(args_list))
+                chunk_args = args_list[chunk_start:chunk_end]
+                
+                logger.info(f"Processing chunk {chunk_start//self.chunk_size + 1}: "
+                           f"sources {chunk_start} to {chunk_end-1}")
+                
+                # Process this chunk
+                chunk_results = pool.map(process_source_worker, chunk_args)
+                
+                # Process results
+                chunk_samples = {}
+                chunk_summary = []
+                
+                for result in chunk_results:
+                    processed_count += 1
+                    
+                    if result['status'] == 'success':
+                        self.successful_sources += 1
+                        
+                        # Store samples
+                        samples = result['samples']
+                        if samples is not None and len(samples) > 0:
+                            chunk_samples[result['source_id']] = samples.tolist()
+                            all_samples[result['source_id']] = samples.tolist()
+                        else:
+                            chunk_samples[result['source_id']] = []
+                            all_samples[result['source_id']] = []
+                        
+                        # Store summary data
+                        quantiles = result['quantiles']
+                        prior_params = result.get('prior_params', {})
+                        hp = result.get('hp', np.nan)
+                        
+                        summary_row = {
+                            'source_id': result['source_id'],
+                            'status': 'success',
+                            'message': result['message'],
+                            'hp': hp,
+                            'glon': prior_params.get('glon', np.nan),
+                            'glat': prior_params.get('glat', np.nan),
+                            'r_median': float(quantiles[0]),
+                            'r_lo': float(quantiles[1]), 
+                            'r_hi': float(quantiles[2]),
+                            'rlen': prior_params.get('edsd_rlen' if self.model == 'EDSD' else 'ggd_rlen', np.nan),
+                            'alpha': prior_params.get('alpha', np.nan) if self.model in ['GGD', 'Photogeometric'] else np.nan,
+                            'beta': prior_params.get('beta', np.nan) if self.model in ['GGD', 'Photogeometric'] else np.nan,
+                            'n_samples': len(samples) if samples is not None else 0
+                        }
+                        
+                    else:
+                        self.failed_sources += 1
+                        summary_row = {
+                            'source_id': result['source_id'],
+                            'status': 'failed',
+                            'message': result['message'],
+                            'hp': result.get('hp', np.nan),
+                            'glon': np.nan,
+                            'glat': np.nan,
+                            'r_median': np.nan,
+                            'r_lo': np.nan,
+                            'r_hi': np.nan,
+                            'rlen': np.nan,
+                            'alpha': np.nan,
+                            'beta': np.nan,
+                            'n_samples': 0
+                        }
+                    
+                    chunk_summary.append(summary_row)
+                    all_summary.append(summary_row)
+                
+                # Save intermediate results for this chunk
+                chunk_num = chunk_start // self.chunk_size + 1
+                self._save_chunk_results(chunk_samples, chunk_summary, output_file, chunk_num)
+                
+                # Progress update
+                elapsed = time.time() - self.start_time
+                rate = processed_count / elapsed if elapsed > 0 else 0
+                eta = (self.total_sources - processed_count) / rate if rate > 0 else float('inf')
+                
+                logger.info(f"Completed chunk {chunk_num}: {processed_count}/{self.total_sources} sources "
+                           f"({100*processed_count/self.total_sources:.1f}%) - "
+                           f"Rate: {rate:.1f} sources/sec - ETA: {eta/60:.1f} min")
+        
+        # Save final consolidated results
+        self.save_results(all_samples, all_summary, output_file)
+        
+    def _process_sequential(self, df: pd.DataFrame, output_file: str) -> None:
+        """Process dataframe sequentially with periodic saving."""
+        # Prepare output data
+        all_samples = {}
+        all_summary = []
+        
+        # Track chunk progress
+        chunk_samples = {}
+        chunk_summary = []
+        processed_count = 0
+        chunk_num = 1
+        
+        # Process each source
+        for idx, row in df.iterrows():
+            result = self.process_single_source(row)
+            processed_count += 1
+            
+            if result['status'] == 'success':
+                self.successful_sources += 1
+                
+                # Store samples
+                samples = result['samples']
+                if samples is not None and len(samples) > 0:
+                    chunk_samples[result['source_id']] = samples.tolist()
+                    all_samples[result['source_id']] = samples.tolist()
+                else:
+                    chunk_samples[result['source_id']] = []
+                    all_samples[result['source_id']] = []
+                
+                # Store summary data
+                quantiles = result['quantiles']
+                prior_params = result.get('prior_params', {})
+                hp = result.get('hp', np.nan)
+                
+                summary_row = {
+                    'source_id': result['source_id'],
+                    'status': 'success',
+                    'message': result['message'],
+                    'hp': hp,
+                    'glon': prior_params.get('glon', np.nan),
+                    'glat': prior_params.get('glat', np.nan),
+                    'r_median': float(quantiles[0]),
+                    'r_lo': float(quantiles[1]), 
+                    'r_hi': float(quantiles[2]),
+                    'rlen': prior_params.get('edsd_rlen' if self.model == 'EDSD' else 'ggd_rlen', np.nan),
+                    'alpha': prior_params.get('alpha', np.nan) if self.model in ['GGD', 'Photogeometric'] else np.nan,
+                    'beta': prior_params.get('beta', np.nan) if self.model in ['GGD', 'Photogeometric'] else np.nan,
+                    'n_samples': len(samples) if samples is not None else 0
+                }
+                
+            else:
+                self.failed_sources += 1
+                summary_row = {
+                    'source_id': result['source_id'],
+                    'status': 'failed',
+                    'message': result['message'],
+                    'hp': result.get('hp', np.nan),
+                    'glon': np.nan,
+                    'glat': np.nan,
+                    'r_median': np.nan,
+                    'r_lo': np.nan,
+                    'r_hi': np.nan,
+                    'rlen': np.nan,
+                    'alpha': np.nan,
+                    'beta': np.nan,
+                    'n_samples': 0
+                }
+            
+            chunk_summary.append(summary_row)
+            all_summary.append(summary_row)
+            
+            # Save chunk if we've reached chunk_size
+            if len(chunk_summary) >= self.chunk_size:
+                self._save_chunk_results(chunk_samples, chunk_summary, output_file, chunk_num)
+                
+                # Progress update
+                elapsed = time.time() - self.start_time
+                rate = processed_count / elapsed if elapsed > 0 else 0
+                eta = (self.total_sources - processed_count) / rate if rate > 0 else float('inf')
+                
+                logger.info(f"Completed chunk {chunk_num}: {processed_count}/{self.total_sources} sources "
+                           f"({100*processed_count/self.total_sources:.1f}%) - "
+                           f"Rate: {rate:.1f} sources/sec - ETA: {eta/60:.1f} min")
+                
+                # Reset for next chunk
+                chunk_samples = {}
+                chunk_summary = []
+                chunk_num += 1
+            
+            # Regular progress updates
+            if processed_count % 100 == 0:
+                elapsed = time.time() - self.start_time
+                rate = processed_count / elapsed if elapsed > 0 else 0
+                eta = (self.total_sources - processed_count) / rate if rate > 0 else float('inf')
+                logger.info(f"Processed {processed_count}/{self.total_sources} sources "
+                           f"({100*processed_count/self.total_sources:.1f}%) - "
+                           f"Rate: {rate:.1f} sources/sec - ETA: {eta/60:.1f} min")
+        
+        # Save any remaining results in the last partial chunk
+        if chunk_summary:
+            self._save_chunk_results(chunk_samples, chunk_summary, output_file, chunk_num)
+            logger.info(f"Completed final chunk {chunk_num}: {processed_count}/{self.total_sources} sources")
+        
+        # Save final consolidated results
+        self.save_results(all_samples, all_summary, output_file)
+    
+    def _save_chunk_results(self, chunk_samples: Dict, chunk_summary: List[Dict], 
+                           output_file: str, chunk_num: int) -> None:
+        """Save intermediate chunk results."""
+        try:
+            output_path = Path(output_file)
+            output_dir = output_path.parent
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save chunk samples
+            if chunk_samples:
+                chunk_samples_file = output_dir / f"{output_path.stem}_chunk_{chunk_num:04d}_samples.parquet"
+                chunk_samples_df = pd.DataFrame([
+                    {'source_id': source_id, 'samples': samples} 
+                    for source_id, samples in chunk_samples.items()
+                ])
+                chunk_samples_df.to_parquet(chunk_samples_file, index=False)
+            
+            # Save chunk summary
+            if chunk_summary:
+                chunk_summary_file = output_dir / f"{output_path.stem}_chunk_{chunk_num:04d}_summary.csv"
+                chunk_summary_df = pd.DataFrame(chunk_summary)
+                chunk_summary_df.to_csv(chunk_summary_file, index=False)
+            
+            logger.debug(f"Saved chunk {chunk_num} results: {len(chunk_samples)} samples, "
+                        f"{len(chunk_summary)} summaries")
+            
+        except Exception as e:
+            logger.error(f"Failed to save chunk {chunk_num} results: {e}")
+
     def save_results(self, samples_by_source: Dict, summary_data: List[Dict], output_file: str) -> None:
         """
         Save all samples and summary data to files.
@@ -1042,6 +1371,54 @@ class DistanceEstimator:
             raise
 
 
+def init_worker(seed_base: int, log_level: str):
+    """
+    Initialize worker process for multiprocessing.
+    
+    Args:
+        seed_base: Base seed for random number generation
+        log_level: Logging level string
+    """
+    # Set unique seed for each worker
+    worker_seed = seed_base + os.getpid()
+    np.random.seed(worker_seed)
+    
+    # Configure logging for worker
+    logging.basicConfig(
+        level=getattr(logging, log_level),
+        format=f'[Worker {os.getpid()}] %(asctime)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler()]
+    )
+    
+    # Suppress numpy errors
+    np.seterr(divide='ignore')
+
+
+def process_source_worker(args: Tuple) -> Dict:
+    """
+    Worker function to process a single source (for multiprocessing).
+    
+    Args:
+        args: Tuple containing (row_data, model, nsamp, nburnin, prior_data)
+        
+    Returns:
+        Dictionary with processing results
+    """
+    row_data, model, nsamp, nburnin, prior_data = args
+    
+    # Create a temporary estimator instance for this worker
+    # Note: We pass an empty prior_file since we already have the prior_data
+    estimator = DistanceEstimator(model, seed=0, prior_file=None)
+    estimator.nsamp = nsamp
+    estimator.nburnin = nburnin
+    estimator.prior_data = prior_data
+    
+    # Convert row_data dict back to pandas Series
+    row = pd.Series(row_data)
+    
+    return estimator.process_single_source(row)
+
+
 @click.command()
 @click.option('--input-file', '-i', required=True, type=click.Path(exists=True),
               help='Input CSV or Parquet file with source data')
@@ -1063,12 +1440,26 @@ class DistanceEstimator:
               help='Path to prior summary CSV file (default: prior_summary.csv)')
 @click.option('--validate-only', is_flag=True,
               help='Only validate input file, do not process')
-def main(input_file, output_file, model, seed, nsamp, nburnin, log_level, prior_file, validate_only):
+@click.option('--n-processes', '-p', default=1, type=int,
+              help='Number of parallel processes to use (default: 1, no multiprocessing)')
+@click.option('--chunk-size', '-c', default=1000, type=int,
+              help='Number of sources to process before saving intermediate results (default: 1000)')
+@click.option('--start-index', default=0, type=int,
+              help='Starting index for processing (inclusive, default: 0)')
+@click.option('--end-index', default=None, type=int,
+              help='Ending index for processing (exclusive, default: None = process to end)')
+def main(input_file, output_file, model, seed, nsamp, nburnin, log_level, prior_file, 
+         validate_only, n_processes, chunk_size, start_index, end_index):
     """
     Standalone distance estimation tool for stellar parallax data.
     
     Processes a CSV or Parquet file containing stellar parallax measurements and estimates
     distances using EDSD, GGD, or Photogeometric models via MCMC sampling.
+    
+    NEW FEATURES:
+    - Multiprocessing: Use --n-processes to enable parallel processing
+    - Chunking: Use --start-index and --end-index to process specific data ranges
+    - Periodic saving: Intermediate results saved every --chunk-size sources
     
     Supported input formats:
     - CSV (.csv)
@@ -1093,6 +1484,22 @@ def main(input_file, output_file, model, seed, nsamp, nburnin, log_level, prior_
     - {output_file}_samples.parquet: All posterior samples grouped by source_id
       (format: source_id column with corresponding samples as list)
     - {output_file}_summary.csv: Summary statistics for each source
+    - {output_file}_chunk_XXXX_samples.parquet: Intermediate chunk results
+    - {output_file}_chunk_XXXX_summary.csv: Intermediate chunk summaries
+    
+    Examples:
+    
+    Basic usage:
+      python distance_estimation_standalone.py -i data.csv -o results -m EDSD
+    
+    Parallel processing with 4 cores:
+      python distance_estimation_standalone.py -i data.csv -o results -m GGD -p 4
+    
+    Process specific range (sources 1000-1999):
+      python distance_estimation_standalone.py -i data.csv -o results -m EDSD --start-index 1000 --end-index 2000
+    
+    Large dataset with frequent saves every 500 sources:
+      python distance_estimation_standalone.py -i data.csv -o results -m Photogeometric -p 8 -c 500
     """
     # Set logging level
     logger.setLevel(getattr(logging, log_level))
@@ -1103,9 +1510,32 @@ def main(input_file, output_file, model, seed, nsamp, nburnin, log_level, prior_
     logger.info(f"Model: {model}")
     logger.info(f"Seed: {seed}")
     
+    if n_processes > 1:
+        logger.info(f"Multiprocessing enabled: {n_processes} processes")
+    if start_index > 0 or end_index is not None:
+        logger.info(f"Processing range: {start_index} to {end_index if end_index else 'end'}")
+    logger.info(f"Chunk size for periodic saving: {chunk_size}")
+    
     try:
+        # Validate parameters
+        if n_processes < 1:
+            raise ValueError("Number of processes must be >= 1")
+        if chunk_size < 1:
+            raise ValueError("Chunk size must be >= 1")
+        if start_index < 0:
+            raise ValueError("Start index must be >= 0")
+        if end_index is not None and end_index <= start_index:
+            raise ValueError("End index must be greater than start index")
+        
         # Initialize estimator
-        estimator = DistanceEstimator(model, seed, prior_file)
+        estimator = DistanceEstimator(
+            model=model, 
+            seed=seed, 
+            prior_file=prior_file,
+            n_processes=n_processes,
+            chunk_size=chunk_size,
+            log_level=log_level
+        )
         estimator.nsamp = nsamp
         estimator.nburnin = nburnin
         
@@ -1117,12 +1547,20 @@ def main(input_file, output_file, model, seed, nsamp, nburnin, log_level, prior_
             logger.error("Input validation failed")
             sys.exit(1)
         
+        # Validate index ranges
+        if start_index >= len(df):
+            raise ValueError(f"Start index {start_index} is beyond dataframe length {len(df)}")
+        if end_index is not None and end_index > len(df):
+            logger.warning(f"End index {end_index} is beyond dataframe length {len(df)}, "
+                          f"will process to end ({len(df)})")
+            end_index = len(df)
+        
         if validate_only:
             logger.info("Validation successful. Exiting (--validate-only flag used).")
             return
         
-        # Process data
-        estimator.process_dataframe(df, output_file)
+        # Process data with new parallel/chunking functionality
+        estimator.process_dataframe_parallel(df, output_file, start_index, end_index)
         
         logger.info("Distance estimation completed successfully")
         
