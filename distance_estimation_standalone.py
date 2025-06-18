@@ -20,7 +20,7 @@ import math
 import multiprocessing as mp
 import os
 import json
-from functools import partial
+from functools import partial, lru_cache
 
 # For HEALPix calculations
 try:
@@ -185,6 +185,273 @@ class PhotogeometricModel:
             # This provides a more realistic density than constant 1.0
             q = gmag - 5 * np.log10(r) + 5  # Calculate absolute magnitude
             return np.exp(-0.5 * (q - 5.0)**2)  # Peak at M_G = 5.0
+
+
+# Optimized photogeometric model implementation for better parallelization
+
+# Global worker state to avoid repeated initialization
+_worker_photogeo_model = None
+_worker_prior_cache = {}
+
+class OptimizedPhotogeometricModel:
+    """Optimized photogeometric model with minimal overhead."""
+    
+    def __init__(self):
+        # Pre-compute correction coefficients
+        self.wc1 = np.array([1.0087583646311324, -0.0254043532944348, 
+                            0.017466488186085014, -0.0027693464181843207])
+        self.wc2 = np.array([1.0052497473798703, -0.023230818732958947, 
+                            0.017399605901929606, -0.002533056831155478])
+    
+    @lru_cache(maxsize=1000)  # Cache results for repeated calculations
+    def gmag_corrected_cached(self, gmag: float, bp_rp: float) -> float:
+        """Cached G-magnitude correction."""
+        clcol = np.clip(bp_rp, 0.25, 3.0)
+        poly_terms = np.array([1, clcol, clcol**2, clcol**3])
+        
+        if gmag < 13:
+            corfac = 1.0
+        elif gmag <= 16:
+            corfac = np.dot(self.wc1, poly_terms)
+        else:
+            corfac = np.dot(self.wc2, poly_terms)
+        
+        return gmag - 2.5 * np.log10(corfac)
+    
+    @staticmethod
+    def fast_qg_density(r: float, gmag: float, bp_rp: float) -> float:
+        """Fast QG density calculation without object overhead."""
+        if r <= 0:
+            return 1e-10
+        
+        q = gmag - 5 * np.log10(r) + 5  # Absolute magnitude
+        # Realistic but fast density model
+        return np.exp(-0.5 * (q - 5.0)**2)
+
+
+def init_worker_optimized(seed_base: int, log_level: str, prior_data: List):
+    """Optimized worker initialization for photogeometric model."""
+    global _worker_photogeo_model, _worker_prior_cache
+    
+    # Standard worker setup
+    worker_seed = seed_base + mp.current_process().pid
+    np.random.seed(worker_seed)
+    np.seterr(divide='ignore')
+    
+    # Initialize model once per worker
+    _worker_photogeo_model = OptimizedPhotogeometricModel()
+    
+    # Pre-cache all prior parameters to avoid repeated lookups
+    _worker_prior_cache = {}
+    for row in prior_data[1:]:  # Skip header
+        try:
+            hp = int(row[0])
+            _worker_prior_cache[hp] = {
+                'glon': float(row[1]),
+                'glat': float(row[2]),
+                'ggd_rlen': float(row[5]),
+                'alpha': float(row[6]),
+                'beta': float(row[7]),
+                'edsd_rlen': float(row[10])
+            }
+        except (ValueError, IndexError):
+            continue
+    
+    logging.basicConfig(level=getattr(logging, log_level))
+
+
+def func_post5_optimized(r: float, params: Dict) -> np.ndarray:
+    """Optimized photogeometric posterior for MCMC.
+    
+    Args:
+        r: Distance parameter
+        params: Pre-computed parameters dictionary
+    
+    Returns:
+        Log posterior array [prior, likelihood]
+    """
+    if not np.isfinite(r) or r <= 0:
+        return np.array([-np.inf, -np.inf])
+    
+    try:
+        # Extract pre-computed parameters
+        w = params['w']
+        wsd = params['wsd']
+        rlen = params['rlen']
+        alpha = params['alpha']
+        beta = params['beta']
+        gmag = params['gmag']
+        bp_rp = params['bp_rp']
+        
+        # Fast density calculation
+        qg_density = OptimizedPhotogeometricModel.fast_qg_density(r, gmag, bp_rp)
+        
+        # Direct computation without intermediate objects
+        ln_prior = (beta * np.log(r) - (r/rlen)**alpha + np.log(qg_density))
+        ln_like = -(w - 1/r)**2 / (2 * wsd**2)
+        
+        # Convert to log10
+        return 0.4342944819 * np.array([ln_prior, ln_like])
+    
+    except Exception:
+        return np.array([-np.inf, -np.inf])
+
+
+def metrop_optimized(func, params: Dict, r_init: float, nburnin: int, 
+                    nsamp: int, r_step: float) -> np.ndarray:
+    """Optimized Metropolis sampler with pre-computed parameters."""
+    r_cur = r_init
+    func_cur = func(r_cur, params)
+    samples = np.full((nsamp, 3), np.nan)
+    
+    n_accept = 0
+    
+    for n in range(1, nburnin + nsamp + 1):
+        # Propose new state
+        r_prop = np.random.normal(r_cur, r_step)
+        
+        if r_prop > 0:  # Only evaluate if positive
+            func_prop = func(r_prop, params)
+            
+            # Metropolis acceptance
+            log_mr = np.sum(func_prop) - np.sum(func_cur)
+            
+            if log_mr >= 0 or log_mr > np.log10(np.random.uniform()):
+                r_cur = r_prop
+                func_cur = func_prop
+                n_accept += 1
+        
+        # Store samples after burn-in
+        if n > nburnin:
+            idx = n - nburnin - 1
+            samples[idx, :2] = func_cur
+            samples[idx, 2] = r_cur
+    
+    return samples
+
+
+def process_source_photogeo_optimized(row_data: Dict) -> Dict:
+    """Optimized source processing using global worker state."""
+    global _worker_photogeo_model, _worker_prior_cache
+    
+    source_id = row_data['gaia_dr3_source_id']
+    
+    try:
+        # Extract data
+        w = float(row_data['parallax']) * 1e-3  # mas to arcsec
+        wsd = float(row_data['parallax_error']) * 1e-3
+        phot_g_mean_mag = float(row_data['g_mag'])
+        bp_rp = float(row_data['bp_rp'])
+        
+        # Validate
+        if not (wsd > 0 and np.isfinite(w) and np.isfinite(phot_g_mean_mag) and np.isfinite(bp_rp)):
+            return {'source_id': source_id, 'status': 'failed', 'message': 'Invalid input data'}
+        
+        # Calculate HEALPix (simplified version)
+        hp = int(source_id) // (2**35 * 4**7)  # Fast integer division
+        
+        # Get cached prior parameters
+        if hp not in _worker_prior_cache:
+            return {'source_id': source_id, 'status': 'failed', 'message': f'HEALPix {hp} not in cache'}
+        
+        prior_params = _worker_prior_cache[hp]
+        
+        # Apply G-magnitude correction using cached model
+        gmag = _worker_photogeo_model.gmag_corrected_cached(phot_g_mean_mag, bp_rp)
+        
+        # MCMC parameters
+        rlen = prior_params['ggd_rlen']
+        alpha = prior_params['alpha']
+        beta = prior_params['beta']
+        
+        # Initialize
+        r_init = 1.0 / w if w > 0 else 1000.0
+        fpu_meas = wsd / w if w != 0 else 1.0
+        r_step = 0.75 * r_init * min(1/3, abs(fpu_meas))
+        
+        # Pre-compute parameters dictionary
+        mcmc_params = {
+            'w': w,
+            'wsd': wsd,
+            'rlen': rlen,
+            'alpha': alpha,
+            'beta': beta,
+            'gmag': gmag,
+            'bp_rp': bp_rp
+        }
+        
+        # Run optimized MCMC
+        samples_full = metrop_optimized(
+            func_post5_optimized, mcmc_params, r_init, 
+            500, 5000, r_step  # nburnin, nsamp
+        )
+        
+        samples = samples_full[:, 2]  # Extract distance samples
+        quantiles = np.quantile(samples, [0.5, 0.159, 0.841])
+        
+        return {
+            'source_id': source_id,
+            'status': 'success',
+            'message': 'Success',
+            'samples': samples,
+            'quantiles': quantiles,
+            'hp': hp,
+            'prior_params': prior_params
+        }
+        
+    except Exception as e:
+        return {
+            'source_id': source_id,
+            'status': 'failed',
+            'message': f'Error: {str(e)}',
+            'samples': None
+        }
+
+
+def process_batch_photogeo(sources_batch: List[Dict]) -> List[Dict]:
+    """Process a batch of sources in a single worker."""
+    return [process_source_photogeo_optimized(source) for source in sources_batch]
+
+
+class OptimizedDistanceEstimator:
+    """Distance estimator with optimized photogeometric parallelization."""
+    
+    def __init__(self, model: str, prior_data: List, n_processes: int = 4, batch_size: int = 50):
+        self.model = model
+        self.prior_data = prior_data
+        self.n_processes = n_processes
+        self.batch_size = batch_size
+    
+    def process_dataframe_photogeo_optimized(self, df, output_file: str):
+        """Process dataframe with optimized photogeometric parallelization."""
+        
+        # Convert DataFrame to list of dictionaries
+        sources_data = [row.to_dict() for _, row in df.iterrows()]
+        
+        # Create batches to reduce process creation overhead
+        batches = [sources_data[i:i + self.batch_size] 
+                  for i in range(0, len(sources_data), self.batch_size)]
+        
+        print(f"Processing {len(sources_data)} sources in {len(batches)} batches")
+        print(f"Using {self.n_processes} processes with batch size {self.batch_size}")
+        
+        # Process with optimized multiprocessing
+        with mp.Pool(
+            processes=self.n_processes,
+            initializer=init_worker_optimized,
+            initargs=(42, 'INFO', self.prior_data)
+        ) as pool:
+            
+            batch_results = pool.map(process_batch_photogeo, batches)
+        
+        # Flatten results
+        all_results = [result for batch in batch_results for result in batch]
+        
+        # Process and save results (same as before)
+        successful = sum(1 for r in all_results if r['status'] == 'success')
+        print(f"Completed: {successful}/{len(all_results)} successful")
+        
+        return all_results
 
 
 # Essential statistical functions
@@ -564,6 +831,7 @@ class DistanceEstimator:
         self.n_processes = n_processes
         self.chunk_size = chunk_size
         self.log_level = log_level
+        self.use_optimized = False  # Default to standard processing
         self.setup_random_seeds()
         
         # Load prior data (skip for worker processes)
@@ -935,13 +1203,134 @@ class DistanceEstimator:
         logger.info(f"Processes: {self.n_processes}")
         logger.info(f"Chunk size for saving: {self.chunk_size}")
         
-        # Prepare for parallel processing
-        if self.n_processes > 1:
-            self._process_parallel(df_chunk, output_file)
+        # Use optimized processing for photogeometric model
+        if self.model == 'Photogeometric' and self.n_processes > 1 and self.use_optimized:
+            self._process_photogeo_optimized(df_chunk, output_file)
         else:
-            self._process_sequential(df_chunk, output_file)
+            # Prepare for parallel processing
+            if self.n_processes > 1:
+                self._process_parallel(df_chunk, output_file)
+            else:
+                self._process_sequential(df_chunk, output_file)
         
         self.print_summary()
+    
+    def _process_photogeo_optimized(self, df: pd.DataFrame, output_file: str) -> None:
+        """Process dataframe using optimized photogeometric parallelization."""
+        logger.info("Using optimized photogeometric parallelization")
+        
+        # Convert DataFrame to list of dictionaries
+        sources_data = [row.to_dict() for _, row in df.iterrows()]
+        
+        # Create batches to reduce process creation overhead
+        batch_size = max(1, self.chunk_size // 10)  # Smaller batches for better load balancing
+        batches = [sources_data[i:i + batch_size] 
+                  for i in range(0, len(sources_data), batch_size)]
+        
+        logger.info(f"Processing {len(sources_data)} sources in {len(batches)} batches")
+        logger.info(f"Using {self.n_processes} processes with batch size {batch_size}")
+        
+        # Setup output files
+        output_path = Path(output_file)
+        output_dir = output_path.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize storage for results
+        all_samples = {}
+        all_summary = []
+        processed_count = 0
+        
+        # Process with optimized multiprocessing
+        with mp.Pool(
+            processes=self.n_processes,
+            initializer=init_worker_optimized,
+            initargs=(self.seed, self.log_level, self.prior_data)
+        ) as pool:
+            
+            # Process batches
+            for batch_idx, batch in enumerate(batches):
+                logger.info(f"Processing batch {batch_idx + 1}/{len(batches)}: "
+                           f"{len(batch)} sources")
+                
+                # Process this batch
+                batch_results = pool.map(process_source_photogeo_optimized, batch)
+                
+                # Process results
+                batch_samples = {}
+                batch_summary = []
+                
+                for result in batch_results:
+                    processed_count += 1
+                    
+                    if result['status'] == 'success':
+                        self.successful_sources += 1
+                        
+                        # Store samples
+                        samples = result['samples']
+                        if samples is not None and len(samples) > 0:
+                            batch_samples[result['source_id']] = samples.tolist()
+                            all_samples[result['source_id']] = samples.tolist()
+                        else:
+                            batch_samples[result['source_id']] = []
+                            all_samples[result['source_id']] = []
+                        
+                        # Store summary data
+                        quantiles = result['quantiles']
+                        prior_params = result.get('prior_params', {})
+                        hp = result.get('hp', np.nan)
+                        
+                        summary_row = {
+                            'source_id': result['source_id'],
+                            'status': 'success',
+                            'message': result['message'],
+                            'hp': hp,
+                            'glon': prior_params.get('glon', np.nan),
+                            'glat': prior_params.get('glat', np.nan),
+                            'r_median': float(quantiles[0]),
+                            'r_lo': float(quantiles[1]), 
+                            'r_hi': float(quantiles[2]),
+                            'rlen': prior_params.get('ggd_rlen', np.nan),
+                            'alpha': prior_params.get('alpha', np.nan),
+                            'beta': prior_params.get('beta', np.nan),
+                            'n_samples': len(samples) if samples is not None else 0
+                        }
+                        
+                    else:
+                        self.failed_sources += 1
+                        summary_row = {
+                            'source_id': result['source_id'],
+                            'status': 'failed',
+                            'message': result['message'],
+                            'hp': result.get('hp', np.nan),
+                            'glon': np.nan,
+                            'glat': np.nan,
+                            'r_median': np.nan,
+                            'r_lo': np.nan,
+                            'r_hi': np.nan,
+                            'rlen': np.nan,
+                            'alpha': np.nan,
+                            'beta': np.nan,
+                            'n_samples': 0
+                        }
+                    
+                    batch_summary.append(summary_row)
+                    all_summary.append(summary_row)
+                
+                # Save intermediate results for this batch
+                batch_num = batch_idx + 1
+                self._save_chunk_results(batch_samples, batch_summary, output_file, batch_num)
+                
+                # Progress update
+                elapsed = time.time() - self.start_time
+                rate = processed_count / elapsed if elapsed > 0 else 0
+                eta = (self.total_sources - processed_count) / rate if rate > 0 else float('inf')
+                
+                logger.info(f"Completed batch {batch_num}: {processed_count}/{self.total_sources} sources "
+                           f"({100*processed_count/self.total_sources:.1f}%) - "
+                           f"Rate: {rate:.1f} sources/sec - ETA: {eta/60:.1f} min")
+        
+        # Save final consolidated results
+        self.save_results(all_samples, all_summary, output_file)
     
     def _process_parallel(self, df: pd.DataFrame, output_file: str) -> None:
         """Process dataframe using multiprocessing with periodic saving."""
@@ -1448,8 +1837,10 @@ def process_source_worker(args: Tuple) -> Dict:
               help='Starting index for processing (inclusive, default: 0)')
 @click.option('--end-index', default=None, type=int,
               help='Ending index for processing (exclusive, default: None = process to end)')
+@click.option('--use-optimized', is_flag=True,
+              help='Use optimized photogeometric processing for better parallelization')
 def main(input_file, output_file, model, seed, nsamp, nburnin, log_level, prior_file, 
-         validate_only, n_processes, chunk_size, start_index, end_index):
+         validate_only, n_processes, chunk_size, start_index, end_index, use_optimized):
     """
     Standalone distance estimation tool for stellar parallax data.
     
@@ -1460,6 +1851,7 @@ def main(input_file, output_file, model, seed, nsamp, nburnin, log_level, prior_
     - Multiprocessing: Use --n-processes to enable parallel processing
     - Chunking: Use --start-index and --end-index to process specific data ranges
     - Periodic saving: Intermediate results saved every --chunk-size sources
+    - Optimized photogeometric processing: Use --use-optimized for better parallelization performance
     
     Supported input formats:
     - CSV (.csv)
@@ -1500,6 +1892,9 @@ def main(input_file, output_file, model, seed, nsamp, nburnin, log_level, prior_
     
     Large dataset with frequent saves every 500 sources:
       python distance_estimation_standalone.py -i data.csv -o results -m Photogeometric -p 8 -c 500
+    
+    Optimized photogeometric processing:
+      python distance_estimation_standalone.py -i data.csv -o results -m Photogeometric -p 8 --use-optimized
     """
     # Set logging level
     logger.setLevel(getattr(logging, log_level))
@@ -1515,6 +1910,11 @@ def main(input_file, output_file, model, seed, nsamp, nburnin, log_level, prior_
     if start_index > 0 or end_index is not None:
         logger.info(f"Processing range: {start_index} to {end_index if end_index else 'end'}")
     logger.info(f"Chunk size for periodic saving: {chunk_size}")
+    
+    if use_optimized and model == 'Photogeometric':
+        logger.info("Optimized photogeometric processing enabled")
+    elif use_optimized and model != 'Photogeometric':
+        logger.warning("--use-optimized flag ignored (only available for Photogeometric model)")
     
     try:
         # Validate parameters
@@ -1538,6 +1938,12 @@ def main(input_file, output_file, model, seed, nsamp, nburnin, log_level, prior_
         )
         estimator.nsamp = nsamp
         estimator.nburnin = nburnin
+        
+        # Set optimized processing flag
+        if use_optimized and model == 'Photogeometric':
+            estimator.use_optimized = True
+        else:
+            estimator.use_optimized = False
         
         # Load input data using the new method
         df = estimator.load_input_data(input_file)
