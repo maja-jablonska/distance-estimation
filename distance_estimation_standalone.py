@@ -873,7 +873,7 @@ class DistanceEstimator:
             bool: True if valid, False otherwise
         """
         # Base columns required for all models
-        required_base_cols = ['gaia_dr3_source_id', 'parallax', 'parallax_error']
+        required_base_cols = ['gaia_dr3_source_id', 'parallax_gaia', 'parallax_error_gaia']
         
         # Check for optional coordinate columns for HEALPix calculation
         has_coordinates = 'ra' in df.columns and 'dec' in df.columns
@@ -951,8 +951,8 @@ class DistanceEstimator:
         
         try:
             # Extract and convert data
-            w = float(row['parallax']) * 1e-3  # Convert mas to arcsec
-            wsd = float(row['parallax_error']) * 1e-3  # Convert mas to arcsec
+            w = float(row['parallax_gaia']) * 1e-3  # Convert mas to arcsec
+            wsd = float(row['parallax_error_gaia']) * 1e-3  # Convert mas to arcsec
             
             # Validate parallax data
             if not (wsd > 0 and wsd != np.inf):
