@@ -338,8 +338,8 @@ def process_source_photogeo_optimized(row_data: Dict) -> Dict:
     
     try:
         # Extract data
-        w = float(row_data['parallax']) * 1e-3  # mas to arcsec
-        wsd = float(row_data['parallax_error']) * 1e-3
+        w = float(row_data['parallax_gaia']) * 1e-3  # mas to arcsec
+        wsd = float(row_data['parallax_error_gaia']) * 1e-3
         phot_g_mean_mag = float(row_data['g_mag'])
         bp_rp = float(row_data['bp_rp'])
         
